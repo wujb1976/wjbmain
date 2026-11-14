@@ -1,0 +1,70 @@
+name: iptv优质源
+
+on:
+  schedule:
+    - cron: '0 0 * * *'
+  workflow_dispatch:
+
+# 1. 防止多个实例同时运行，避免冲突
+concurrency:
+  group: iptv-build
+  cancel-in-progress: true
+
+# 2. 显式声明最小权限，更安全
+permissions:
+  contents: write
+  actions: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    env:
+      TZ: Asia/Shanghai
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+          # 3. 缓存 pip 依赖，加速后续运行
+          cache: 'pip'
+
+      - name: Delete workflows
+        uses: Mattraks/delete-workflow-runs@v2
+        with:
+          token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          retain_days: 0
+          keep_minimum_runs: 2
+
+      # 4. 合并系统依赖和 Python 依赖安装
+      - name: 安装依赖
+        run: |
+          sudo apt-get update -y && sudo apt-get install -y --no-install-recommends ffmpeg
+          pip install --upgrade pip
+          pip install selenium requests eventlet
+        shell: bash
+
+      - name: 抓取并验证IPTV源
+        # 5. 步骤命名更具描述性
+        run: python ./tools/iptv.py
+
+      # 6. 简化文件复制，去掉无用的 pwd 和 cd ..
+      - name: 生成直播源文件
+        run: cp -f output/ipv4_result.txt live.txt
+
+      # 7. 只在文件有实际变更时才提交，避免空提交
+      - name: 提交更改
+        run: |
+          git config user.email "zhoujck@live.com"
+          git config user.name "zhoujck"
+          git add .
+          if git diff --cached --quiet; then
+            echo "无变更，跳过提交"
+          else
+            git commit -m "action: $(date '+%Y-%m-%d %H:%M:%S')"
+            git push
+          fi
